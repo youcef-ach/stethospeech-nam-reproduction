@@ -112,4 +112,6 @@ To prevent silent fallback to partially initialized random weights and ensure sa
 3. **Weight Normalization Reparameterization:** Official Meta/fairseq Unit HiFi-GAN checkpoints decouple convolutional filters into magnitude $g$ (`weight_g`) and direction $v$ (`weight_v`). The repository provides automated reparameterization:
    $$W = g \cdot \frac{v}{\|v\|}$$
    evaluated over spatial and channel dimensions, allowing official checkpoints to be ingested into pure PyTorch convolutional layers under strict validation without requiring fairseq dependencies.
+4. **K-Means Quantizer Serialization:** Quantizer models are serialized using `joblib`. Because `joblib.load()` relies on Python's `pickle` module, deserialization is not inherently secure against arbitrary code execution; checkpoints must strictly originate from trusted, authenticated sources.
+5. **Offline Legacy Checkpoint Conversion:** Converting legacy pickled checkpoints with `weights_only=False` must be performed in a genuinely isolated execution environment (e.g. an ephemeral air-gapped container or disposable VM); the `convert_checkpoint.py` utility does not provide sandboxing or execution isolation itself.
 

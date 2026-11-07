@@ -3,6 +3,8 @@ Tests for configuration loading, CLI execution, early stopping, and checkpoint h
 """
 
 import os
+import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -584,3 +586,60 @@ def test_synthesizer_helpers():
         np.save(bad_feat_path, np.random.randn(20, 512).astype(np.float32))
         with pytest.raises(ValueError, match="Feature dimension mismatch"):
             load_features(bad_feat_path, expected_dim=768)
+
+
+def test_installed_console_entry_points():
+    """Verify installed console commands execute from outside repo working directory."""
+    with tempfile.TemporaryDirectory() as external_dir:
+        # Build environment including Python scripts directories in PATH
+        env = dict(os.environ)
+        script_dirs = [
+            os.path.join(sys.prefix, "Scripts"),
+            os.path.join(sys.prefix, "bin"),
+            os.path.join(site.getuserbase(), "Scripts"),
+            os.path.join(site.getuserbase(), "bin"),
+        ]
+        valid_script_dirs = [d for d in script_dirs if os.path.exists(d)]
+        if valid_script_dirs:
+            env["PATH"] = os.pathsep.join(valid_script_dirs) + os.pathsep + env.get("PATH", "")
+
+        commands = [
+            ("stethospeech-train", "Train StethoSpeech translation model"),
+            ("stethospeech-synth", "StethoSpeech Neural Vocoding"),
+            ("stethospeech-mfa-prep", "Prepare MFA corpus"),
+        ]
+
+        for cmd_name, expected_text in commands:
+            cmd_path = shutil.which(cmd_name, path=env["PATH"])
+            if not cmd_path:
+                for d in valid_script_dirs:
+                    for ext in [".exe", ""]:
+                        candidate = os.path.join(d, f"{cmd_name}{ext}")
+                        if os.path.exists(candidate):
+                            cmd_path = candidate
+                            break
+                    if cmd_path:
+                        break
+
+            if cmd_path:
+                res = subprocess.run(
+                    [cmd_path, "--help"],
+                    capture_output=True,
+                    text=True,
+                    cwd=external_dir,
+                    env=env,
+                )
+                assert res.returncode == 0, f"{cmd_name} failed:\n{res.stderr}\n{res.stdout}"
+                assert expected_text in res.stdout, f"Expected '{expected_text}' in {cmd_name} output."
+                assert "No module named 'scripts'" not in res.stderr
+
+        # Verify module execution from outside repo directory
+        res_m = subprocess.run(
+            [sys.executable, "-m", "stethospeech.training.cli", "--help"],
+            capture_output=True,
+            text=True,
+            cwd=external_dir,
+            env=env,
+        )
+        assert res_m.returncode == 0
+        assert "Train StethoSpeech translation model" in res_m.stdout

@@ -201,24 +201,29 @@ python scripts/synthesize.py \
 
 *Checkpoint Safeguard:* All CLI entry points strictly validate checkpoint files using `weights_only=True` by default. If a checkpoint is missing, corrupted, partially populated, or incompatible with the target architecture, execution halts immediately with a descriptive error. The CLI refuses to generate synthetic audio from uninitialized random weights.
 
+> [!WARNING]
+> **Security Notice (K-Means Checkpoints):** K-Means clustering checkpoints (`.bin`, `.joblib`) are deserialized via `joblib.load()`. Because `joblib` uses Python's pickle protocol internally, deserialization is **not inherently secure**. Checkpoints must originate exclusively from trusted, authenticated sources. Never load unverified third-party clustering files.
+
 ### 8.4 Trusted Offline Checkpoint Conversion
 For legacy checkpoints containing pickled Python objects that fail secure `weights_only=True` loading, convert them offline using the dedicated trusted conversion utility:
 ```bash
 python scripts/convert_checkpoint.py --input legacy_model.pth --output secure_model.pth
 ```
-This utility loads the trusted file in an isolated offline session and re-saves pure parameter tensors that load safely with `weights_only=True`.
+
+> [!CAUTION]
+> **Security Notice (Legacy Checkpoint Conversion):** Legacy checkpoint conversion requires deserializing with `weights_only=False`. This must be performed strictly inside a **genuinely isolated execution environment** (e.g., an ephemeral air-gapped container, disposable VM, or offline sandbox) and only on strictly trusted input files. The `convert_checkpoint.py` script **does not provide sandboxing or isolation itself**.
 
 ---
 
 ## 9. Reproducing Available Architecture Tests
 
-You can verify all model parameter counts, tensor dimension preservation, masked loss operations, split partitioning logic, and CLI pipelines on CPU without downloading external datasets:
+You can verify all model parameter counts, tensor dimension preservation, masked loss operations, split partitioning logic, CLI pipelines, and installed console commands on CPU without downloading external datasets:
 
 ```bash
 python -m pytest -v
 ```
 
-The automated suite runs 37 unit and integration tests across data processing, models, vocoding, CLI execution, and failure handling:
+The automated suite runs 41 unit and integration tests across data processing, models, vocoding, CLI execution, installed console entry points, and failure handling:
 ```text
 tests/test_cli.py::test_yaml_config_loading PASSED                       [  2%]
 tests/test_cli.py::test_early_stopping_mathematical_resolution PASSED    [  5%]
@@ -257,7 +262,7 @@ tests/test_vocoder.py::test_vocoder_parameter_count PASSED               [ 91%]
 tests/test_vocoder.py::test_vocoder_temporal_upsampling_320x PASSED      [ 94%]
 tests/test_vocoder.py::test_resblock1_receptive_fields PASSED            [ 97%]
 tests/test_vocoder.py::test_kmeans_unit_quantizer_fit_predict PASSED     [100%]
-============================== 37 passed in ~40s ===============================
+============================== 41 passed in ~60s ===============================
 ```
 
 ---

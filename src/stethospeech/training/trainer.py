@@ -10,7 +10,6 @@ Provides unified training, validation, and evaluation loops with:
 """
 
 import os
-import sys
 import time
 from typing import Dict, List, Optional
 import torch
@@ -201,13 +200,9 @@ class ModelTrainer:
 
 
 def main() -> None:
-    """CLI entry point for training (delegates to scripts.train)."""
-    try:
-        from scripts.train import run_training_cli
-        run_training_cli()
-    except Exception as exc:
-        print(f"[ERROR] Training failed: {exc}", file=sys.stderr)
-        sys.exit(1)
+    """CLI entry point for training (delegates to stethospeech.training.cli)."""
+    from stethospeech.training.cli import main as cli_main
+    cli_main()
 
 
 if __name__ == "__main__":

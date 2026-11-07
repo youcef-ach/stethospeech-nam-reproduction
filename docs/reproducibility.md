@@ -10,12 +10,12 @@ To avoid ambiguity, the project explicitly separates reproducible components fro
 
 | Component | Reproducibility Level | Requirements | Verified Output / Artifact |
 |---|:---:|---|---|
-| **Architectural Invariants & Parameter Counts** | **100% Fully Reproducible** | CPU only, Python 3.10–3.13, PyTorch | 40 passing automated tests: Baseline (19,702,016 params), FFT (29,263,360 params), Vocoder (13,375,809 params), CLI integration, strict checkpoint validation, and conversion utility. |
+| **Architectural Invariants & Parameter Counts** | **100% Fully Reproducible** | CPU only, Python 3.10–3.13, PyTorch | 41 passing automated tests: Baseline (19,702,016 params), FFT (29,263,360 params), Vocoder (13,375,809 params), CLI integration, installed console entry points, strict checkpoint validation, and conversion utility. |
 | **Masked Loss & Temporal Alignment Math** | **100% Fully Reproducible** | CPU only | Linear temporal interpolation and zero-padding masking invariant tests pass. |
 | **Early Stopping Mathematical Logic** | **100% Fully Reproducible** | CPU only | Exact reproduction of Epoch 35 best checkpoint selection and Epoch 45 halt. |
 | **Vocoder Upsampling Rate ($320\times$)** | **100% Fully Reproducible** | CPU only | 50 frames @ 50 Hz correctly produce 16,000 waveform samples (1.00s @ 16kHz). |
 | **Data Partitioning & Boundary Handling** | **100% Fully Reproducible** | CPU only | Flexible split ratios (including test_ratio=0.0), historical 80/10/10 split reproduction. |
-| **CLI Pipelines & Checkpoint Hardening** | **100% Fully Reproducible** | CPU only | End-to-end training, evaluation, feature synthesis, and unit synthesis CLI execution; hardened rejection of missing, unexpected, corrupt, and partially initialized checkpoints. |
+| **CLI Pipelines & Installed Console Scripts** | **100% Fully Reproducible** | CPU only | `stethospeech-train`, `stethospeech-synth`, and `stethospeech-mfa-prep` console entry points, and hardened rejection of missing, unexpected, corrupt, and partially initialized checkpoints. |
 | **MFA Corpus Organization Pipeline** | **100% Fully Reproducible** | Local or Kaggle raw audio directories | Automated pairing and structuring of multi-speaker corpus. |
 | **Full Baseline Model Training (Phase 4A)** | **Reproducible with Raw Features** | GPU (NVIDIA P100/T4), ~2.5 hours, 11,323 matched pairs | Retrains baseline model across training epochs on matched pairs. Newly trained runs are subject to hardware, driver, and initialization variance and are not guaranteed to reproduce the exact historical 0.23171 MAE. |
 | **Historical Baseline Weights (`best_stetho_model.pth`)** | **Non-Reproducible from Disk** | Original Kaggle ephemeral container | Checkpoint file was saved in ephemeral `/kaggle/working/` and expired. Must be retrained using `scripts/train.py`. |
@@ -130,3 +130,13 @@ python scripts/convert_checkpoint.py \
   --input path/to/legacy_checkpoint.pth \
   --output path/to/safe_checkpoint.pth
 ```
+
+> [!CAUTION]
+> **Isolation Requirement:** Legacy checkpoint conversion requires deserialization with `weights_only=False`. This must be performed strictly inside a **genuinely isolated execution environment** (e.g. an ephemeral air-gapped container or throwaway sandbox) and only on strictly trusted input files. The `convert_checkpoint.py` utility does **not** provide sandboxing or isolation itself.
+
+---
+
+## 6. Deserialization Security Guidelines
+
+1. **PyTorch Checkpoints:** Model weights are loaded strictly with `torch.load(..., weights_only=True)` and strict layer key verification.
+2. **K-Means Quantizers:** Deserialization of `.joblib` / `.bin` clustering models relies on `joblib.load()`, which uses Python's pickle protocol. Because joblib deserialization is **not inherently secure**, clustering models must strictly originate from trusted, verified sources.

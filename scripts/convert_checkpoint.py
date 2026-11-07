@@ -4,6 +4,13 @@ Trusted Offline Checkpoint Conversion Utility.
 Converts legacy PyTorch checkpoints containing pickled Python objects into
 pure tensor state-dictionaries that can be loaded securely with weights_only=True.
 
+SECURITY WARNING:
+    Legacy checkpoint conversion with weights_only=False requires a genuinely
+    isolated execution environment (such as an air-gapped container, disposable VM,
+    or sandboxed offline runner) and strictly trusted input files.
+    This conversion script does NOT provide sandboxing or execution isolation itself.
+    Deserializing untrusted files with weights_only=False can execute arbitrary code.
+
 Usage:
     python scripts/convert_checkpoint.py --input legacy.pth --output secure.pth
 """
@@ -18,6 +25,11 @@ def convert_checkpoint(input_path: str, output_path: str) -> None:
     """
     Load a trusted legacy checkpoint offline and re-save pure state dict tensors.
 
+    SECURITY WARNING:
+        This function uses weights_only=False to load legacy serialized classes.
+        It must be executed exclusively in an isolated environment on trusted files.
+        The function itself does not provide sandboxing or isolation against malicious code.
+
     Args:
         input_path: Path to existing legacy checkpoint.
         output_path: Path where sanitized pure-tensor checkpoint will be saved.
@@ -25,7 +37,10 @@ def convert_checkpoint(input_path: str, output_path: str) -> None:
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"Input checkpoint does not exist: {input_path}")
 
-    print(f"[Converter] Loading trusted checkpoint '{input_path}' (offline conversion)...")
+    print(
+        f"[Converter] WARNING: Deserializing '{input_path}' with weights_only=False.\n"
+        f"            Ensure this runs inside an isolated execution environment on trusted files."
+    )
     # Explicit offline load of trusted legacy file
     raw_ckpt = torch.load(input_path, map_location="cpu", weights_only=False)
 
@@ -66,7 +81,11 @@ def convert_checkpoint(input_path: str, output_path: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert trusted legacy PyTorch checkpoints to secure weights_only=True format."
+        description=(
+            "Convert trusted legacy PyTorch checkpoints to secure weights_only=True format.\n"
+            "SECURITY: Must be run inside an isolated environment on trusted files only."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--input", "-i", type=str, required=True, help="Path to input legacy checkpoint")
     parser.add_argument("--output", "-o", type=str, required=True, help="Path to output sanitized checkpoint")
@@ -81,4 +100,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

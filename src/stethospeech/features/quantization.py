@@ -89,7 +89,7 @@ class KMeansUnitQuantizer:
             raise ValueError(f"Expected 2D or 3D feature array, got shape {features_np.shape}")
 
     def save(self, model_path: str) -> None:
-        """Save fitted quantizer to disk."""
+        """Save fitted quantizer to disk via joblib."""
         if self.model is None:
             raise RuntimeError("Cannot save an unfitted quantizer model.")
         os.makedirs(os.path.dirname(os.path.abspath(model_path)), exist_ok=True)
@@ -97,7 +97,15 @@ class KMeansUnitQuantizer:
 
     @classmethod
     def load(cls, model_path: str) -> "KMeansUnitQuantizer":
-        """Load fitted quantizer from file."""
+        """
+        Load fitted quantizer from file.
+
+        .. warning::
+            Security Notice: joblib uses Python's pickle protocol internally and is
+            NOT inherently secure against arbitrary code execution. Checkpoints must
+            come strictly from trusted sources. Never load untrusted or unverified
+            .joblib or .bin files.
+        """
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"K-Means checkpoint file not found: {model_path}")
         instance = cls()

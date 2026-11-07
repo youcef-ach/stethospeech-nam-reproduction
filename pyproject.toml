@@ -55,7 +55,7 @@ dev = [
 ]
 
 [project.scripts]
-stethospeech-train = "stethospeech.training.trainer:main"
+stethospeech-train = "stethospeech.training.cli:main"
 stethospeech-mfa-prep = "stethospeech.data.mfa_corpus:main"
 stethospeech-synth = "stethospeech.inference.synthesizer:main"
 
