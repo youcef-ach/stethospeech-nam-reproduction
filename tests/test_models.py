@@ -5,12 +5,16 @@ Validates exact parameter counts, tensor dimension preservation, and attention i
 - Phase 4A Transformer Seq2Seq: exactly 19,702,016 parameters
 - Phase 4B StethoSpeech FFT: exactly 29,263,360 parameters
 - Phase 4B with CTC Projection Head: exactly 29,485,344 parameters
+- Interface compatibility and training steps with ModelTrainer
 """
 
-import pytest
 import torch
+import torch.optim as optim
+from torch.utils.data import DataLoader
 from stethospeech.models.transformer_baseline import TransformerSeq2Seq, PositionalEncoding
 from stethospeech.models.stethospeech_fft import StethoSpeechModel, StethoSpeechWithCTC, FFTBlock
+from stethospeech.training.trainer import ModelTrainer
+from stethospeech.data.dataset import collate_stethospeech_batch
 
 
 def test_phase_4a_parameter_count():
@@ -128,3 +132,43 @@ def test_phase_4b_with_ctc_head():
 
     assert out_features.shape == (2, 50, 768), f"Expected features shape (2, 50, 768), got {out_features.shape}"
     assert ctc_logits.shape == (2, 50, 32), f"Expected CTC logits shape (2, 50, 32), got {ctc_logits.shape}"
+
+
+def test_fft_training_step_with_model_trainer():
+    """Verify an actual FFT training step (forward + backward) runs via ModelTrainer without TypeError."""
+    torch.manual_seed(42)
+    device = torch.device("cpu")
+
+    # Lightweight FFT model (1 enc + 1 dec) for fast test
+    model = StethoSpeechModel(enc_layers=1, dec_layers=1, d_model=64, d_inner=128, n_head=2)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-3)
+
+    dummy_batch = [
+        (torch.randn(20, 768), torch.randn(25, 768)),
+        (torch.randn(22, 768), torch.randn(22, 768)),
+    ]
+    loader = DataLoader(dummy_batch, batch_size=2, collate_fn=collate_stethospeech_batch)
+
+    trainer = ModelTrainer(model=model, optimizer=optimizer, device=device)
+    loss = trainer.train_epoch(loader)
+
+    assert loss > 0.0 and not torch.isnan(torch.tensor(loss))
+
+
+def test_ctc_model_training_step_with_model_trainer():
+    """Verify StethoSpeechWithCTC works seamlessly with ModelTrainer forwarding adapter."""
+    torch.manual_seed(42)
+    device = torch.device("cpu")
+
+    model = StethoSpeechWithCTC(enc_layers=1, dec_layers=1, d_model=64, d_inner=128, n_head=2, ctc_vocab=16)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-3)
+
+    dummy_batch = [
+        (torch.randn(15, 768), torch.randn(18, 768)),
+    ]
+    loader = DataLoader(dummy_batch, batch_size=1, collate_fn=collate_stethospeech_batch)
+
+    trainer = ModelTrainer(model=model, optimizer=optimizer, device=device)
+    loss = trainer.train_epoch(loader)
+
+    assert loss > 0.0 and not torch.isnan(torch.tensor(loss))

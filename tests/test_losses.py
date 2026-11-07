@@ -11,7 +11,6 @@ def test_masked_l1_loss_temporal_interpolation(dummy_speech_batch):
     """Verify linear interpolation properly aligns differing temporal lengths."""
     batch_size = 2
     t_nam = 45
-    t_speech = 55
     feature_dim = 768
 
     preds = torch.randn(batch_size, t_nam, feature_dim, requires_grad=True)
@@ -79,3 +78,4 @@ def test_auxiliary_ctc_loss():
 
     loss.backward()
     assert logits.grad is not None
+

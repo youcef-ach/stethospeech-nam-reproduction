@@ -2,7 +2,6 @@
 Tests for Unit HiFi-GAN vocoder generator and acoustic unit quantizer.
 """
 
-import pytest
 import torch
 import numpy as np
 from stethospeech.models.vocoder import CodeHiFiGANGenerator, ResBlock1
@@ -66,3 +65,4 @@ def test_kmeans_unit_quantizer_fit_predict():
 
     assert units.shape == (25,), f"Expected shape (25,), got {units.shape}"
     assert np.all(units >= 0) and np.all(units < 10), "Unit IDs must be within [0, 9]"
+

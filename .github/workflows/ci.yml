@@ -32,9 +32,11 @@ jobs:
 
       - name: Lint and format checks
         run: |
-          # Stop the build if there are Python syntax errors or undefined names
-          flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics || true
+          # Enforce syntax errors, undefined names, and structural code quality (no || true masking)
+          flake8 src tests scripts --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 src tests scripts --count --max-line-length=127 --statistics
 
       - name: Run automated CPU test suite
         run: |
           pytest -v --durations=10
+
