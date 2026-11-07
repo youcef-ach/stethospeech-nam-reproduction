@@ -1,0 +1,26 @@
+# Set default behavior to automatically normalize line endings
+* text=auto eol=lf
+
+# Python sources
+*.py text diff=python eol=lf
+*.pyi text diff=python eol=lf
+
+# Configuration and documentation
+*.md text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+
+# Shell / scripts
+*.sh text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.svg text eol=lf
+*.pdf binary

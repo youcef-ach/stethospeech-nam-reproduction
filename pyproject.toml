@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=65.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stethospeech"
+version = "0.2.0"
+description = "Reproduction and engineering study of Non-Audible Murmur (NAM) to audible speech translation using self-supervised speech representations"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Research Use / Attribution Required" }
+authors = [
+    { name = "Achouri Youcef Islem", email = "yi.achouri@esi-sba.dz" }
+]
+keywords = [
+    "deep-learning",
+    "speech-synthesis",
+    "non-audible-murmur",
+    "stethoscope-speech",
+    "hubert",
+    "hifi-gan",
+    "transformer",
+    "pytorch"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "torch>=2.0.0",
+    "torchaudio>=2.0.0",
+    "transformers>=4.30.0",
+    "numpy>=1.23.0",
+    "scipy>=1.10.0",
+    "scikit-learn>=1.2.0",
+    "soundfile>=0.12.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.65.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "flake8>=6.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+]
+
+[project.scripts]
+stethospeech-train = "stethospeech.training.trainer:main"
+stethospeech-mfa-prep = "stethospeech.data.mfa_corpus:main"
+stethospeech-synth = "stethospeech.inference.synthesizer:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --strict-markers"
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312", "py313"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
