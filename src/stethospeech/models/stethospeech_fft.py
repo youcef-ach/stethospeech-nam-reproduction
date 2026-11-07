@@ -146,6 +146,7 @@ class StethoSpeechModel(nn.Module):
         self,
         x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
+        src_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass mapping input HuBERT representations.
@@ -153,10 +154,14 @@ class StethoSpeechModel(nn.Module):
         Args:
             x: Input NAM features of shape (Batch, Seq_len, hubert_dim).
             mask: Optional key padding mask (Batch, Seq_len).
+            src_key_padding_mask: Optional alias for mask.
 
         Returns:
             Predicted speech features of shape (Batch, Seq_len, hubert_dim).
         """
+        if mask is None and src_key_padding_mask is not None:
+            mask = src_key_padding_mask
+
         batch_size, seq_len, _ = x.shape
 
         x = F.relu(self.enc_proj(x))
@@ -209,6 +214,7 @@ class StethoSpeechWithCTC(StethoSpeechModel):
         self,
         x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
+        src_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass returning both predicted speech features and CTC logits.
@@ -216,12 +222,14 @@ class StethoSpeechWithCTC(StethoSpeechModel):
         Args:
             x: Input NAM features of shape (Batch, Seq_len, hubert_dim).
             mask: Optional key padding mask (Batch, Seq_len).
+            src_key_padding_mask: Optional alias for mask.
 
         Returns:
-            Tuple of:
-            - predicted_features: Shape (Batch, Seq_len, hubert_dim)
-            - ctc_logits: Shape (Batch, Seq_len, ctc_vocab)
+            Tuple of (predicted_speech_features, ctc_logits).
         """
+        if mask is None and src_key_padding_mask is not None:
+            mask = src_key_padding_mask
+
         batch_size, seq_len, _ = x.shape
 
         x = F.relu(self.enc_proj(x))
@@ -241,3 +249,4 @@ class StethoSpeechWithCTC(StethoSpeechModel):
 
         out_features = self.out_proj(x)
         return out_features, ctc_logits
+

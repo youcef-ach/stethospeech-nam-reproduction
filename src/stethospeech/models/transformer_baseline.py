@@ -87,6 +87,7 @@ class TransformerSeq2Seq(nn.Module):
         self,
         x: torch.Tensor,
         src_key_padding_mask: Optional[torch.Tensor] = None,
+        mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass for NAM-to-Speech translation.
@@ -95,10 +96,14 @@ class TransformerSeq2Seq(nn.Module):
             x: Input NAM features of shape (Batch, Seq_len, 768).
             src_key_padding_mask: Optional boolean tensor of shape (Batch, Seq_len)
                 where True indicates padded time frames to ignore in self-attention.
+            mask: Optional alias for src_key_padding_mask.
 
         Returns:
             Predicted speech features of shape (Batch, Seq_len, 768).
         """
+        if src_key_padding_mask is None and mask is not None:
+            src_key_padding_mask = mask
+
         out = self.proj_in(x)
         out = self.pe(out)
         out = self.encoder(out, src_key_padding_mask=src_key_padding_mask)
@@ -108,3 +113,4 @@ class TransformerSeq2Seq(nn.Module):
     def get_parameter_count(self) -> int:
         """Return total trainable parameter count."""
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
+

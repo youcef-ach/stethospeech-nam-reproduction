@@ -12,7 +12,7 @@ Dataset Accounting & Splitting:
 """
 
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
@@ -67,6 +67,9 @@ def create_speaker_dependent_splits(
     Replicates the exact historical 80/10/10 random split:
     - 11,323 total files -> 9,058 Train, 1,132 Val, 1,133 Test.
 
+    Supports test_ratio = 0.0 (e.g. for Phase 4B 95/5 train/val setting).
+    Validates that ratios sum to 1.0 and rejects datasets too small to partition.
+
     Args:
         file_list: List of matched base file IDs.
         train_ratio: Fraction for training (default: 0.80).
@@ -78,10 +81,37 @@ def create_speaker_dependent_splits(
         Dictionary mapping "train", "val", "test" to lists of file IDs.
     """
     total = len(file_list)
-    if total == 0:
-        return {"train": [], "val": [], "test": []}
+    if total < 2:
+        raise ValueError(
+            f"Dataset too small to partition: {total} items provided. At least 2 items required."
+        )
+
+    # Validate ratios
+    if train_ratio <= 0.0 or val_ratio < 0.0 or test_ratio < 0.0:
+        raise ValueError(
+            f"Split ratios must be non-negative, and train_ratio must be positive. "
+            f"Got train={train_ratio}, val={val_ratio}, test={test_ratio}."
+        )
+
+    ratio_sum = train_ratio + val_ratio + test_ratio
+    if abs(ratio_sum - 1.0) > 1e-4:
+        raise ValueError(
+            f"Split ratios must sum to 1.0 (within tolerance), got sum={ratio_sum:.6f} "
+            f"(train={train_ratio}, val={val_ratio}, test={test_ratio})."
+        )
 
     eval_ratio = val_ratio + test_ratio
+    if eval_ratio <= 0.0:
+        # All train
+        return {"train": sorted(file_list), "val": [], "test": []}
+
+    eval_count = int(round(total * eval_ratio))
+    if eval_count == 0 or eval_count >= total:
+        raise ValueError(
+            f"Dataset of {total} items cannot be split with eval_ratio={eval_ratio:.3f}. "
+            "Adjust split ratios or provide a larger dataset."
+        )
+
     train_files, eval_files = train_test_split(
         file_list,
         test_size=eval_ratio,
@@ -89,13 +119,23 @@ def create_speaker_dependent_splits(
         shuffle=True,
     )
 
-    relative_test_ratio = test_ratio / eval_ratio
-    val_files, test_files = train_test_split(
-        eval_files,
-        test_size=relative_test_ratio,
-        random_state=random_state,
-        shuffle=True,
-    )
+    if test_ratio <= 0.0:
+        # No test split requested (e.g. Phase 4B setting)
+        val_files = eval_files
+        test_files = []
+    elif val_ratio <= 0.0:
+        # No validation split requested
+        val_files = []
+        test_files = eval_files
+    else:
+        # Both val and test are non-zero
+        relative_test_ratio = test_ratio / eval_ratio
+        val_files, test_files = train_test_split(
+            eval_files,
+            test_size=relative_test_ratio,
+            random_state=random_state,
+            shuffle=True,
+        )
 
     return {
         "train": sorted(train_files),

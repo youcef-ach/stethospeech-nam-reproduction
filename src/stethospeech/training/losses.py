@@ -6,9 +6,7 @@ interpolation, aligning with the empirical methodology used during the
 historical StethoSpeech experiments.
 """
 
-from typing import Optional
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 
@@ -128,3 +126,4 @@ def auxiliary_ctc_loss(
         reduction="mean",
         zero_infinity=True,
     )
+

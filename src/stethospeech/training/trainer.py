@@ -5,13 +5,14 @@ Provides unified training, validation, and evaluation loops with:
 - Configurable gradient clipping
 - Learning rate scheduling with ReduceLROnPlateau
 - Early stopping tracking with best checkpoint persistence
-- Support for both Phase 4A Transformer and Phase 4B FFT architectures
+- Unified model forwarding adapter supporting both Phase 4A Transformer
+  and Phase 4B FFT architectures
 """
 
-import argparse
 import os
+import sys
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -19,8 +20,6 @@ from torch.utils.data import DataLoader
 from stethospeech.training.losses import masked_l1_loss
 from stethospeech.training.early_stopping import EarlyStopping
 from stethospeech.utils.logging import get_logger
-from stethospeech.utils.seed import set_seed
-from stethospeech.utils.config import ExperimentConfig, load_config
 
 
 class ModelTrainer:
@@ -55,13 +54,38 @@ class ModelTrainer:
         self.clip_grad_norm = clip_grad_norm
         self.logger = logger or get_logger("stethospeech.trainer")
 
+    def forward_model(
+        self,
+        x: torch.Tensor,
+        padding_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Unified model forwarding adapter.
+
+        Handles interface differences across model families:
+        - TransformerSeq2Seq (supports src_key_padding_mask / mask)
+        - StethoSpeechModel (supports mask / src_key_padding_mask)
+        - StethoSpeechWithCTC (unpacks features from (features, ctc_logits) tuple)
+
+        Args:
+            x: Input feature tensor (Batch, Time, Dim).
+            padding_mask: Optional boolean padding mask (Batch, Time).
+
+        Returns:
+            Predicted feature tensor (Batch, Time, Dim).
+        """
+        out = self.model(x, mask=padding_mask, src_key_padding_mask=padding_mask)
+        if isinstance(out, tuple):
+            return out[0]
+        return out
+
     def train_epoch(self, dataloader: DataLoader) -> float:
         """Run one training epoch over the dataloader."""
         self.model.train()
         total_loss = 0.0
         total_batches = 0
 
-        for batch_idx, batch in enumerate(dataloader):
+        for batch in dataloader:
             nam, speech, nam_lens, speech_lens, nam_mask = batch
             nam = nam.to(self.device)
             speech = speech.to(self.device)
@@ -70,10 +94,7 @@ class ModelTrainer:
 
             self.optimizer.zero_grad()
 
-            # Forward pass: pass attention mask
-            preds = self.model(nam, src_key_padding_mask=nam_mask)
-
-            # Compute masked L1 loss with linear time interpolation if lengths differ
+            preds = self.forward_model(nam, padding_mask=nam_mask)
             loss = masked_l1_loss(preds, speech, speech_lens)
 
             loss.backward()
@@ -102,7 +123,7 @@ class ModelTrainer:
                 speech_lens = speech_lens.to(self.device)
                 nam_mask = nam_mask.to(self.device)
 
-                preds = self.model(nam, src_key_padding_mask=nam_mask)
+                preds = self.forward_model(nam, padding_mask=nam_mask)
                 loss = masked_l1_loss(preds, speech, speech_lens)
 
                 total_loss += loss.item()
@@ -114,7 +135,7 @@ class ModelTrainer:
     def fit(
         self,
         train_loader: DataLoader,
-        val_loader: DataLoader,
+        val_loader: Optional[DataLoader] = None,
         epochs: int = 45,
         checkpoint_path: str = "checkpoints/best_model.pth",
     ) -> Dict[str, List[float]]:
@@ -123,7 +144,7 @@ class ModelTrainer:
 
         Args:
             train_loader: DataLoader for training pairs.
-            val_loader: DataLoader for validation pairs.
+            val_loader: Optional DataLoader for validation pairs.
             epochs: Maximum training epochs.
             checkpoint_path: Path to write optimal checkpoint.
 
@@ -133,55 +154,60 @@ class ModelTrainer:
         os.makedirs(os.path.dirname(os.path.abspath(checkpoint_path)), exist_ok=True)
         history: Dict[str, List[float]] = {"train_loss": [], "val_loss": []}
 
+        param_count = sum(p.numel() for p in self.model.parameters())
         self.logger.info(
-            f"Starting training run: {epochs} max epochs, "
-            f"parameters: {sum(p.numel() for p in self.model.parameters()):,}"
+            f"Starting training run: {epochs} max epochs, parameters: {param_count:,}"
         )
 
         for epoch in range(1, epochs + 1):
             start_time = time.time()
             train_loss = self.train_epoch(train_loader)
-            val_loss = self.evaluate(val_loader)
             duration = time.time() - start_time
-
             history["train_loss"].append(train_loss)
-            history["val_loss"].append(val_loss)
 
             current_lr = self.optimizer.param_groups[0]["lr"]
-            self.logger.info(
-                f"Epoch {epoch:03d}/{epochs:03d} | Train MAE: {train_loss:.5f} | "
-                f"Val MAE: {val_loss:.5f} | LR: {current_lr:.1e} | Time: {duration:.1f}s"
-            )
 
-            # Step scheduler based on validation loss
-            if self.scheduler is not None:
-                self.scheduler.step(val_loss)
+            if val_loader is not None and len(val_loader) > 0:
+                val_loss = self.evaluate(val_loader)
+                history["val_loss"].append(val_loss)
 
-            # Early stopping check
-            if self.early_stopping is not None:
-                saved = self.early_stopping(val_loss, self.model, checkpoint_path, epoch=epoch)
-                if self.early_stopping.early_stop:
-                    self.logger.info(f"Early stopping triggered at epoch {epoch}. Halting training.")
-                    break
+                self.logger.info(
+                    f"Epoch {epoch:03d}/{epochs:03d} | Train MAE: {train_loss:.5f} | "
+                    f"Val MAE: {val_loss:.5f} | LR: {current_lr:.1e} | Time: {duration:.1f}s"
+                )
+
+                if self.scheduler is not None:
+                    self.scheduler.step(val_loss)
+
+                if self.early_stopping is not None:
+                    self.early_stopping(val_loss, self.model, checkpoint_path, epoch=epoch)
+                    if self.early_stopping.early_stop:
+                        self.logger.info(
+                            f"Early stopping triggered at epoch {epoch}. Halting training."
+                        )
+                        break
+            else:
+                self.logger.info(
+                    f"Epoch {epoch:03d}/{epochs:03d} | Train MAE: {train_loss:.5f} | "
+                    f"LR: {current_lr:.1e} | Time: {duration:.1f}s"
+                )
+                # When no validation split is configured, save checkpoint at each epoch
+                torch.save(
+                    {"epoch": epoch, "state_dict": self.model.state_dict(), "train_loss": train_loss},
+                    checkpoint_path,
+                )
 
         return history
 
 
 def main() -> None:
-    """CLI entry point for training."""
-    parser = argparse.ArgumentParser(description="Train StethoSpeech translation model.")
-    parser.add_argument("--config", type=str, required=True, help="Path to experiment YAML configuration")
-    parser.add_argument("--device", type=str, default=None, help="Override execution device (cpu or cuda)")
-    args = parser.parse_args()
-
-    cfg = load_config(args.config)
-    set_seed(cfg.training.seed)
-
-    device_str = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    device = torch.device(device_str)
-
-    print(f"[Trainer] Loaded experiment config: '{cfg.experiment_name}', device: {device}")
-    print("[Trainer] Pipeline successfully initialized. To train, provide dataset paths in YAML config.")
+    """CLI entry point for training (delegates to scripts.train)."""
+    try:
+        from scripts.train import run_training_cli
+        run_training_cli()
+    except Exception as exc:
+        print(f"[ERROR] Training failed: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

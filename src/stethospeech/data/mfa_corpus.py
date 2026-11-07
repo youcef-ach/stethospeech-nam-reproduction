@@ -19,7 +19,7 @@ import argparse
 import glob
 import os
 import shutil
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 
 def prepare_mfa_corpus(
@@ -136,3 +136,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

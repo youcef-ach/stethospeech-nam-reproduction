@@ -2,7 +2,7 @@
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 import yaml
 
 
@@ -89,3 +89,4 @@ def load_config(config_path: str) -> ExperimentConfig:
         raw_dict = yaml.safe_load(f) or {}
 
     return ExperimentConfig.from_dict(raw_dict)
+
