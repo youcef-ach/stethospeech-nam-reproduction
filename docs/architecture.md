@@ -6,7 +6,7 @@ This document details the neural network architectures, layer configurations, an
 
 ## 1. Problem Formulation
 
-The Non-Audible Murmur (NAM) translation task maps stethoscopic acoustic vibrations captured near the throat into audible speech representations.
+The Non-Audible Murmur (NAM) translation task maps acoustic vibration signals captured by an electronic stethoscope into audible speech representations. Following the experimental protocol established by Shah et al. (ACM IMWUT 2024), sensing utilizes a 3M Littmann 3200 Electronic Stethoscope secured primarily over the retroauricular mastoid bone (behind the ear) with an elastic headband, complemented by submental (under-chin) and anterolateral neck skin surface contacts. This captures bone-conducted and soft-tissue articulatory vibrations while physically isolating the microphone from airborne acoustic radiation.
 
 Let $X = (x_1, x_2, \dots, x_{T_{\text{nam}}})$ denote the input NAM feature sequence, where $x_t \in \mathbb{R}^{768}$ represents a frame-level HuBERT embedding at 50 Hz.  
 Let $Y = (y_1, y_2, \dots, y_{T_{\text{speech}}})$ denote the target speech feature sequence, where $y_t \in \mathbb{R}^{768}$.
@@ -92,3 +92,13 @@ where $H' = \text{LayerNorm}(H + \text{Dropout}(\text{MultiHeadAttention}(H)))$.
   $50 \text{ Hz frames} \times 320 = 16,000 \text{ Hz audio waveform samples}$.
 - Multi-Receptive Field (MRF) fusion modules across kernel sizes $[3, 7, 11]$ and dilations $[(1, 3, 5)]$.
 - **Exact Parameter Count:** 13,375,809 parameters.
+
+---
+
+## 5. Model Interface Compatibility & Padding Masks
+
+The repository unifies two distinct neural architectures under a common training loop via `ModelTrainer.forward_model()`:
+- **Transformer Baseline:** PyTorch's native `nn.TransformerEncoder` expects `src_key_padding_mask` where `True` indicates padded/ignored positions.
+- **StethoSpeech FFT Architecture:** Custom FFT layers accept `mask` (or `src_key_padding_mask`), generating inverted 1/0 attention weights and convolutional feature masking.
+- **CTC Multi-Output Handling:** For architectures incorporating auxiliary classification heads (e.g. `StethoSpeechWithCTC`), `forward_model()` unpacks the prediction tuple `(pred_features, ctc_logits)` to preserve clean loss computation while maintaining modular decoupling.
+

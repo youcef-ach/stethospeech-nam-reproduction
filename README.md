@@ -8,15 +8,16 @@ An independent reproduction, engineering study, and domain adaptation of the Ste
 
 ## 1. Project Overview
 
-Non-Audible Murmur (NAM) speech represents acoustic vibration signals captured by a specialized stethoscopic microphone placed against the skin of the anterolateral neck. While NAM signals capture articulatory movements and vocal tract resonances, they suffer from extreme high-frequency attenuation, lack natural fundamental frequency ($F_0$), and lack the acoustic richness of airborne speech.
+Non-Audible Murmur (NAM) speech represents acoustic vibration signals captured by an electronic stethoscope attached directly to the body. Following the original StethoSpeech experimental setup (Shah et al., ACM IMWUT 2024), the primary sensor is a **3M Littmann 3200 Electronic Stethoscope** positioned over the **retroauricular mastoid bone** (behind the ear) and held firmly in place with an elastic headband. Additional contact points include the **submental** (under-chin) and **anterolateral neck** skin surfaces. These placements capture bone-conducted and soft-tissue acoustic vibrations generated during unvoiced murmuring while effectively isolating the recording from ambient airborne noise.
 
 This repository provides an open research codebase evaluating sequence-to-sequence neural translation from NAM signals to audible speech features in self-supervised latent spaces (HuBERT / mHuBERT), coupled with discrete unit neural vocoding (Unit HiFi-GAN).
 
 ### Key Implementations
-- **Phase 4A Baseline:** A 19.7M-parameter 6-layer Transformer Encoder mapping HuBERT representations with dynamic temporal interpolation.
+- **Phase 4A Baseline:** A 19.7M-parameter 6-layer Transformer mapping HuBERT representations with dynamic temporal interpolation.
 - **Phase 4B Experimental Architecture:** A 29.26M-parameter Feed-Forward Transformer (FFT) architecture incorporating 1D depth convolutions (kernel 9) adapted from the published StethoSpeech specification.
 - **Phase 5 Pure-PyTorch Vocoder:** A native PyTorch reimplementation of Meta AI's Unit HiFi-GAN generator ($320\times$ temporal upsampling) eliminating external C++ compilation dependencies.
-- **Data Engineering:** Automated Montreal Forced Aligner (MFA) corpus restructuring and deterministic dataset partitioning.
+- **Data Engineering:** Automated Montreal Forced Aligner (MFA) corpus restructuring, flexible partitioning supporting arbitrary validation/test ratios (including zero-test Phase 4B settings), and validation safeguards.
+- **Robust Inference & Training CLI:** End-to-end command-line interfaces for training, checkpoint evaluation, and discrete-unit/feature vocoder synthesis with strict checkpoint validation (preventing silent fallback to random weights).
 
 ---
 
@@ -99,7 +100,7 @@ stethospeech/
 │       ├── training/             # Loss functions, trainer, and early stopping
 │       ├── inference/            # End-to-end synthesizer pipeline
 │       └── utils/                # Configuration loader, logging, and seed management
-├── tests/                        # 24 automated CPU tests (parameter counts, math, CLI)
+├── tests/                        # 37 automated CPU tests (parameter counts, math, splits, CLI e2e, hardening)
 ├── pyproject.toml                # Build system and dependency specifications
 └── README.md
 ```
@@ -151,43 +152,105 @@ The raw StethoSpeech corpus comprises stethoscopic NAM recordings and parallel a
 
 ---
 
-## 8. Training & Evaluation Commands
+## 8. Training, Evaluation & Synthesis Commands
 
-### Train Phase 4A Transformer Baseline
+### 8.1 Model Training
+Train the Phase 4A Transformer baseline on CPU (smoke test) or GPU:
 ```bash
+# CPU execution
+python scripts/train.py --config configs/baseline_transformer.yaml --device cpu
+
+# GPU execution
 python scripts/train.py --config configs/baseline_transformer.yaml --device cuda
 ```
 
-### Train Phase 4B StethoSpeech FFT Architecture
+Train the Phase 4B StethoSpeech FFT architecture:
 ```bash
 python scripts/train.py --config configs/experimental_fft.yaml --device cuda
 ```
+
+### 8.2 Checkpoint Evaluation
+Evaluate a trained checkpoint on the held-out test split:
+```bash
+python scripts/train.py --config configs/baseline_transformer.yaml --checkpoint checkpoints/best_model.pth --eval-only
+```
+
+### 8.3 Speech Synthesis & Neural Vocoding
+Synthesize 16 kHz audio waveforms using the pure-PyTorch Unit HiFi-GAN vocoder:
+
+**Mode 1: Direct Unit Synthesis** (from discrete token sequence):
+```bash
+python scripts/synthesize.py \
+    --mode units \
+    --input-file data/units/sample_units.npy \
+    --output-wav output/sample_from_units.wav \
+    --vocoder-checkpoint checkpoints/vocoder/g_00500000 \
+    --device cpu
+```
+
+**Mode 2: Feature Quantization and Synthesis** (from 768-dim continuous features):
+```bash
+python scripts/synthesize.py \
+    --mode features \
+    --input-file data/features/speech_feat.npy \
+    --output-wav output/sample_from_features.wav \
+    --kmeans-model checkpoints/kmeans/mhubert_base_vp_en_es_fr_it_de_layer11_clusters_1000.bin \
+    --vocoder-checkpoint checkpoints/vocoder/g_00500000 \
+    --device cpu
+```
+
+*Checkpoint Safeguard:* All CLI entry points strictly validate checkpoint files. If a checkpoint is missing, corrupted, or incompatible with the target architecture, execution halts immediately with a clear error. The CLI refuses to generate synthetic audio from uninitialized random weights.
 
 ---
 
 ## 9. Reproducing Available Architecture Tests
 
-You can verify all model parameter counts, tensor dimension preservation, masked loss operations, and vocoder temporal upsampling on CPU without downloading external datasets:
+You can verify all model parameter counts, tensor dimension preservation, masked loss operations, split partitioning logic, and CLI pipelines on CPU without downloading external datasets:
 
 ```bash
 python -m pytest -v
 ```
 
-Execution runs 24 unit and integration tests in ~7 seconds:
+The automated suite runs 37 unit and integration tests across data processing, models, vocoding, CLI execution, and failure handling:
 ```text
-tests/test_cli.py::test_yaml_config_loading PASSED
-tests/test_cli.py::test_early_stopping_mathematical_resolution PASSED
-tests/test_cli.py::test_trainer_cpu_smoke_step PASSED
-tests/test_data.py::test_find_matched_feature_pairs PASSED
-tests/test_data.py::test_speaker_dependent_splits PASSED
-tests/test_losses.py::test_masked_l1_loss_temporal_interpolation PASSED
-tests/test_models.py::test_phase_4a_parameter_count PASSED
-tests/test_models.py::test_phase_4b_executed_model_parameter_count PASSED
-tests/test_models.py::test_phase_4b_with_ctc_head PASSED
-tests/test_vocoder.py::test_vocoder_parameter_count PASSED
-tests/test_vocoder.py::test_vocoder_temporal_upsampling_320x PASSED
-...
-======================= 24 passed in 6.96s =======================
+tests/test_cli.py::test_yaml_config_loading PASSED                       [  2%]
+tests/test_cli.py::test_early_stopping_mathematical_resolution PASSED    [  5%]
+tests/test_cli.py::test_trainer_cpu_smoke_step PASSED                    [  8%]
+tests/test_cli.py::test_e2e_cli_training_baseline PASSED                 [ 10%]
+tests/test_cli.py::test_e2e_cli_training_fft_phase_4b PASSED             [ 13%]
+tests/test_cli.py::test_cli_train_failure_cases PASSED                   [ 16%]
+tests/test_cli.py::test_e2e_cli_synthesis_units PASSED                   [ 18%]
+tests/test_cli.py::test_cli_synthesis_failure_cases PASSED               [ 21%]
+tests/test_cli.py::test_harden_checkpoint_loading PASSED                 [ 24%]
+tests/test_cli.py::test_synthesizer_helpers PASSED                       [ 27%]
+tests/test_data.py::test_find_matched_feature_pairs PASSED               [ 29%]
+tests/test_data.py::test_missing_feature_directory_raises PASSED         [ 32%]
+tests/test_data.py::test_speaker_dependent_splits_standard PASSED        [ 35%]
+tests/test_data.py::test_speaker_dependent_splits_phase_4b_no_test PASSED [ 37%]
+tests/test_data.py::test_speaker_dependent_splits_historical_fidelity PASSED [ 40%]
+tests/test_data.py::test_speaker_dependent_splits_invalid_ratios_raise PASSED [ 43%]
+tests/test_data.py::test_speaker_dependent_splits_dataset_too_small_raises PASSED [ 45%]
+tests/test_data.py::test_stethospeech_pair_dataset PASSED                [ 48%]
+tests/test_data.py::test_stethospeech_pair_dataset_missing_file_raises PASSED [ 51%]
+tests/test_data.py::test_collate_stethospeech_batch PASSED               [ 54%]
+tests/test_losses.py::test_masked_l1_loss_temporal_interpolation PASSED  [ 56%]
+tests/test_losses.py::test_masked_l1_loss_ignores_padded_frames PASSED   [ 59%]
+tests/test_losses.py::test_exact_masked_l1_loss_raises_on_shape_mismatch PASSED [ 62%]
+tests/test_losses.py::test_auxiliary_ctc_loss PASSED                     [ 64%]
+tests/test_models.py::test_phase_4a_parameter_count PASSED               [ 67%]
+tests/test_models.py::test_phase_4a_forward_pass_dimensions PASSED       [ 70%]
+tests/test_models.py::test_positional_encoding_shape_invariance PASSED   [ 72%]
+tests/test_models.py::test_fft_block_temporal_invariance PASSED          [ 75%]
+tests/test_models.py::test_phase_4b_executed_model_parameter_count PASSED [ 78%]
+tests/test_models.py::test_phase_4b_forward_pass_dimensions PASSED       [ 81%]
+tests/test_models.py::test_phase_4b_with_ctc_head PASSED                 [ 83%]
+tests/test_models.py::test_fft_training_step_with_model_trainer PASSED   [ 86%]
+tests/test_models.py::test_ctc_model_training_step_with_model_trainer PASSED [ 89%]
+tests/test_vocoder.py::test_vocoder_parameter_count PASSED               [ 91%]
+tests/test_vocoder.py::test_vocoder_temporal_upsampling_320x PASSED      [ 94%]
+tests/test_vocoder.py::test_resblock1_receptive_fields PASSED            [ 97%]
+tests/test_vocoder.py::test_kmeans_unit_quantizer_fit_predict PASSED     [100%]
+============================== 37 passed in ~40s ===============================
 ```
 
 ---
@@ -209,10 +272,11 @@ The following table summarizes the verified experimental results achieved during
 | **Test Set Sizing** | **1,133 held-out utterances** | N/A | Reference speech tested |
 | **Evaluation Split** | Speaker-Dependent (Closed-Speaker) | Speaker-Dependent | Reference speech |
 
-*Forensic Note on Metrics:*  
+*Notes on Historical Metrics & Artifacts:*  
 - The historical shorthand `0.2315` in preliminary notes represented rounded shorthand; the verified empirical test loss recorded in primary execution stdout is **0.23171 MAE**.
 - The historical metric `0.1182 MSE` reported in preliminary course drafts does not appear in primary console stdout logs and is formally designated as unverified.
 - Phase 4B training was interrupted by runtime limits after ~2 preliminary epochs and is not claimed as a converged reproduction.
+- Historical model weight checkpoints produced during ephemeral Kaggle sessions expired with the cloud instances and are not bundled in this repository.
 
 ---
 
@@ -239,11 +303,10 @@ The following table summarizes the verified experimental results achieved during
    Michael McAuliffe, Michaela Socolof, Sarah Mihuc, Michael Wagner, and Morgan Sonderegger. *"Montreal Forced Aligner: Trainable Text-Speech Alignment Using Kaldi."* Interspeech 2017.
 
 ### Provenance Notice
-Original research and baseline model execution conducted by **Achouri Youcef Islem** (May 2026). Modular engineering refactoring, pure-PyTorch vocoder port, automated test suite, and release packaging coordinated with GPT-6 (November 2026). See [`docs/provenance.md`](docs/provenance.md) for full forensic chain of custody.
+Original research and baseline model execution conducted by **Achouri Youcef Islem** (May 2026). Modular engineering refactoring, pure-PyTorch vocoder port, automated test suite, and release packaging coordinated with GPT-6 (November 2026). See [`docs/provenance.md`](docs/provenance.md) for full project provenance.
 
-### Licensing
-This repository contains original research code and adapted open-source components:
-- Reconstructed and original architecture modules: Research Use Only / Attribution Required.
-- Official StethoSpeech reference code is licensed under the MIT License by its respective authors.
-- Checkpoints downloaded from Meta AI are subject to Meta's research licenses.
-- No public open-source license has been applied without explicit owner selection.
+### Licensing & Rights
+- **Upstream StethoSpeech Code:** The original StethoSpeech reference implementation by Shah et al. is licensed under the MIT License.
+- **Upstream Vocoder & Model Weights:** HiFi-GAN and fairseq components are MIT licensed. Pretrained HuBERT and Unit HiFi-GAN checkpoints downloaded from Meta AI are distributed under Meta AI Research licenses.
+- **Repository Codebase:** Original reproduction code, tests, and engineering modifications are Copyright (c) 2026 Achouri Youcef Islem. An open-source license (such as MIT or CC BY-NC 4.0) is recommended for public dissemination and will be finalized upon repository owner approval. Commercial redistribution is restricted pending formal license selection.
+
