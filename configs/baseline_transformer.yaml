@@ -1,0 +1,37 @@
+# StethoSpeech Phase 4A Transformer Baseline Configuration
+# Model: 6-layer Transformer Encoder (19,702,016 parameters)
+# Training: 45 epochs, AdamW (lr=1e-4, wd=1e-4), ReduceLROnPlateau, EarlyStopping(patience=10, delta=0.001)
+
+experiment_name: "phase_4a_transformer_baseline"
+
+model:
+  architecture: "transformer_baseline"
+  input_dim: 768
+  hidden_dim: 512
+  output_dim: 768
+  num_layers: 6
+  nheads: 8
+  dim_ff: 2048
+  dropout: 0.1
+
+training:
+  seed: 42
+  epochs: 45
+  batch_size: 32
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  clip_grad_norm: 1.0
+  lr_patience: 3
+  lr_factor: 0.5
+  early_stop_patience: 10
+  early_stop_delta: 0.001
+  device: "cuda"
+
+data:
+  nam_dir: "data/features/nam"
+  speech_dir: "data/features/speech"
+  output_dir: "experiments/baseline"
+  train_split: 0.80
+  val_split: 0.10
+  test_split: 0.10
+  num_workers: 2

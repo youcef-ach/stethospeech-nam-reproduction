@@ -1,0 +1,42 @@
+# StethoSpeech Phase 4B Feed-Forward Transformer Configuration
+# Model: FastSpeech2-derived FFT blocks (29,263,360 parameters)
+# Encoder: 6 FFT layers | Decoder: 4 FFT layers | 1D Convolutions (kernel [9, 1])
+# Note: Auxiliary CTC head is defined (29,485,344 params with head) but decoupled from loss.
+
+experiment_name: "phase_4b_stethospeech_fft"
+
+model:
+  architecture: "stethospeech_fft"
+  input_dim: 768
+  hidden_dim: 256
+  output_dim: 768
+  enc_layers: 6
+  dec_layers: 4
+  nheads: 2
+  d_inner: 1024
+  kernel_sizes: [9, 1]
+  dropout: 0.1
+  include_ctc_head: false
+  ctc_vocab: 32
+
+training:
+  seed: 42
+  epochs: 50
+  batch_size: 16
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  clip_grad_norm: 1.0
+  lr_patience: 3
+  lr_factor: 0.5
+  early_stop_patience: 10
+  early_stop_delta: 0.001
+  device: "cuda"
+
+data:
+  nam_dir: "data/features/nam_mhubert_l11"
+  speech_dir: "data/features/speech_mhubert_l11"
+  output_dir: "experiments/fft"
+  train_split: 0.95
+  val_split: 0.05
+  test_split: 0.0
+  num_workers: 2
