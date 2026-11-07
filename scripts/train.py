@@ -19,6 +19,7 @@ from stethospeech.models.transformer_baseline import TransformerSeq2Seq
 from stethospeech.models.stethospeech_fft import StethoSpeechModel, StethoSpeechWithCTC
 from stethospeech.training.trainer import ModelTrainer
 from stethospeech.training.early_stopping import EarlyStopping
+from stethospeech.inference.synthesizer import load_model_checkpoint
 from stethospeech.data.dataset import (
     find_matched_feature_pairs,
     create_speaker_dependent_splits,
@@ -176,10 +177,8 @@ def run_training_cli():
         if not os.path.exists(checkpoint_path):
             print(f"[ERROR] Checkpoint for evaluation not found: {checkpoint_path}", file=sys.stderr)
             sys.exit(1)
-        print(f"[Eval] Loading checkpoint from {checkpoint_path}...")
-        ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
-        state_dict = ckpt["state_dict"] if "state_dict" in ckpt else ckpt
-        model.load_state_dict(state_dict)
+        print(f"[Eval] Loading checkpoint securely from {checkpoint_path}...")
+        model = load_model_checkpoint(checkpoint_path, model, device, strict=True)
 
         trainer = ModelTrainer(model=model, optimizer=optim.AdamW(model.parameters()), device=device)
         target_loader = test_loader or val_loader
@@ -234,14 +233,13 @@ def run_training_cli():
     # Evaluate on held-out test split if configured
     if test_loader is not None and len(test_loader) > 0:
         print("[Eval] Evaluating best checkpoint on held-out test set...")
-        ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
-        state_dict = ckpt["state_dict"] if "state_dict" in ckpt else ckpt
-        model.load_state_dict(state_dict)
+        model = load_model_checkpoint(checkpoint_path, model, device, strict=True)
         test_loss = trainer.evaluate(test_loader)
         print(f"📊 Evaluated Test Loss: {test_loss:.5f} MAE ({len(splits['test']):,} samples)")
         print(
-            "[Note] This test score evaluates the model trained during this session. "
-            "It is separate from the historical 0.23171 MAE achieved on the full 11,323 pair corpus."
+            "[Note] This evaluation reflects the checkpoint trained during this session. "
+            "A newly trained run is not guaranteed to converge to the historical 0.23171 MAE, "
+            "which required 45 epochs on the complete 11,323 pair corpus using an NVIDIA Tesla GPU."
         )
 
     print("🏆 Training run completed successfully.")

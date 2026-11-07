@@ -63,7 +63,7 @@ class ExperimentConfig:
         model_data = data.get("model", {})
         training_data = data.get("training", {})
         data_data = data.get("data", {})
-        
+
         return cls(
             experiment_name=data.get("experiment_name", "unnamed_experiment"),
             model=ModelConfig(**model_data),
@@ -84,9 +84,8 @@ def load_config(config_path: str) -> ExperimentConfig:
     """
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
-    
+
     with open(config_path, "r", encoding="utf-8") as f:
         raw_dict = yaml.safe_load(f) or {}
 
     return ExperimentConfig.from_dict(raw_dict)
-

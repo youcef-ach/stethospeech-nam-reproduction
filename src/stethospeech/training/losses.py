@@ -126,4 +126,3 @@ def auxiliary_ctc_loss(
         reduction="mean",
         zero_infinity=True,
     )
-

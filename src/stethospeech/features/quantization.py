@@ -23,7 +23,14 @@ class KMeansUnitQuantizer:
         random_state: Seed for initialization (default: 42).
     """
 
-    def __init__(self, num_clusters: int = 1000, random_state: int = 42):
+    def __init__(
+        self,
+        num_clusters: int = 1000,
+        random_state: int = 42,
+        n_clusters: Optional[int] = None,
+    ):
+        if n_clusters is not None:
+            num_clusters = n_clusters
         self.num_clusters = num_clusters
         self.random_state = random_state
         self.model: Optional[MiniBatchKMeans] = None

@@ -102,3 +102,14 @@ The repository unifies two distinct neural architectures under a common training
 - **StethoSpeech FFT Architecture:** Custom FFT layers accept `mask` (or `src_key_padding_mask`), generating inverted 1/0 attention weights and convolutional feature masking.
 - **CTC Multi-Output Handling:** For architectures incorporating auxiliary classification heads (e.g. `StethoSpeechWithCTC`), `forward_model()` unpacks the prediction tuple `(pred_features, ctc_logits)` to preserve clean loss computation while maintaining modular decoupling.
 
+---
+
+## 6. Checkpoint Validation & Weight-Norm Reparameterization
+
+To prevent silent fallback to partially initialized random weights and ensure safe execution:
+1. **Secure Loading by Default:** All checkpoint loading operations enforce PyTorch's `weights_only=True` to eliminate arbitrary code execution risks.
+2. **Strict Parameter Validation:** Checkpoint loaders strictly verify model and vocoder state dictionaries. Any missing parameters (`KeyError`), unexpected keys (`KeyError`), or tensor shape mismatches (`ValueError`) trigger an immediate halt.
+3. **Weight Normalization Reparameterization:** Official Meta/fairseq Unit HiFi-GAN checkpoints decouple convolutional filters into magnitude $g$ (`weight_g`) and direction $v$ (`weight_v`). The repository provides automated reparameterization:
+   $$W = g \cdot \frac{v}{\|v\|}$$
+   evaluated over spatial and channel dimensions, allowing official checkpoints to be ingested into pure PyTorch convolutional layers under strict validation without requiring fairseq dependencies.
+

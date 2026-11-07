@@ -27,6 +27,65 @@ from stethospeech.models.vocoder import CodeHiFiGANGenerator
 from stethospeech.features.quantization import KMeansUnitQuantizer
 
 
+def remap_checkpoint_keys(state_dict: dict, target_model: nn.Module) -> dict:
+    """
+    Map official checkpoint key naming conventions to target model structure.
+    Handles 'generator.' / 'model.' prefix stripping and official weight-norm reparameterization.
+    """
+    target_keys = set(target_model.state_dict().keys())
+    if set(state_dict.keys()) == target_keys:
+        return state_dict
+
+    # Check for weight normalization keys (.weight_g, .weight_v)
+    has_wn = any(k.endswith(".weight_g") for k in state_dict)
+    if has_wn:
+        converted = {}
+        for k in state_dict:
+            if k.endswith(".weight_g"):
+                base = k[:-9]
+                vg = state_dict[k]
+                vv_key = base + ".weight_v"
+                if vv_key in state_dict:
+                    vv = state_dict[vv_key]
+                    if "ups" in base:
+                        # ConvTranspose1d: norm over dimensions (0, 2)
+                        norm = torch.norm(vv, p=2, dim=[0, 2], keepdim=True)
+                    else:
+                        # Conv1d: norm over dimensions (1, 2)
+                        norm = torch.norm(vv, p=2, dim=[1, 2], keepdim=True)
+                    converted[base + ".weight"] = vg * (vv / (norm + 1e-12))
+            elif k.endswith(".weight_v"):
+                continue
+            else:
+                converted[k] = state_dict[k]
+        state_dict = converted
+
+    if set(state_dict.keys()) == target_keys:
+        return state_dict
+
+    # Check prefix stripping: generator.
+    if any(k.startswith("generator.") for k in state_dict):
+        stripped = {
+            (k[10:] if k.startswith("generator.") else k): v
+            for k, v in state_dict.items()
+        }
+        if set(stripped.keys()) == target_keys:
+            return stripped
+        state_dict = stripped
+
+    # Check prefix stripping: model.
+    if any(k.startswith("model.") for k in state_dict):
+        stripped_model = {
+            (k[6:] if k.startswith("model.") else k): v
+            for k, v in state_dict.items()
+        }
+        if set(stripped_model.keys()) == target_keys:
+            return stripped_model
+        state_dict = stripped_model
+
+    return state_dict
+
+
 def load_model_checkpoint(
     checkpoint_path: str,
     model: nn.Module,
@@ -52,12 +111,14 @@ def load_model_checkpoint(
         raise ValueError(f"Checkpoint file is empty (0 bytes): {checkpoint_path}")
 
     try:
-        try:
-            ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
-        except Exception:
-            ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
     except Exception as exc:
-        raise ValueError(f"Corrupted or unreadable checkpoint '{checkpoint_path}': {exc}") from exc
+        raise ValueError(
+            f"Failed to load checkpoint '{checkpoint_path}' securely with weights_only=True: {exc}. "
+            "Automatic fallback to unsafe weights_only=False is disabled. "
+            "If this is a trusted legacy checkpoint containing pickled objects, convert it using "
+            "scripts/convert_checkpoint.py in an isolated environment."
+        ) from exc
 
     if not isinstance(ckpt, dict):
         raise ValueError(f"Expected dict checkpoint, got {type(ckpt).__name__}")
@@ -72,18 +133,36 @@ def load_model_checkpoint(
     else:
         state_dict = ckpt
 
+    if not isinstance(state_dict, dict):
+        raise ValueError(f"Extracted state_dict must be a dictionary, got {type(state_dict).__name__}")
+
+    state_dict = remap_checkpoint_keys(state_dict, model)
+
     model_keys = set(model.state_dict().keys())
     ckpt_keys = set(state_dict.keys())
 
-    # Check key compatibility
-    overlap = model_keys & ckpt_keys
-    if not overlap:
+    missing_keys = model_keys - ckpt_keys
+    unexpected_keys = ckpt_keys - model_keys
+
+    if missing_keys:
         raise KeyError(
-            f"Checkpoint keys do not match model architecture ({type(model).__name__}). "
-            f"Found {len(ckpt_keys)} keys, 0 matched."
+            f"Checkpoint is missing {len(missing_keys)} required parameter keys for {type(model).__name__}: "
+            f"{sorted(list(missing_keys))[:5]}... Partially populated checkpoints are rejected."
         )
 
-    model.load_state_dict(state_dict, strict=strict)
+    if unexpected_keys and strict:
+        raise KeyError(
+            f"Checkpoint contains {len(unexpected_keys)} unexpected keys for {type(model).__name__}: "
+            f"{sorted(list(unexpected_keys))[:5]}... Checkpoint structure does not match target model."
+        )
+
+    try:
+        model.load_state_dict(state_dict, strict=True)
+    except RuntimeError as err:
+        raise ValueError(
+            f"Incompatible tensor shapes or weights in checkpoint for {type(model).__name__}: {err}"
+        ) from err
+
     model.to(device).eval()
     return model
 
@@ -213,8 +292,17 @@ class StethoSpeechSynthesizer:
         # Load Vocoder weights if configured
         vocoder = None
         if vocoder_weights_path is not None:
-            raw_vocoder = CodeHiFiGANGenerator()
-            vocoder = load_model_checkpoint(vocoder_weights_path, raw_vocoder, dev, strict=False)
+            num_units = 1000
+            try:
+                raw_sd = torch.load(vocoder_weights_path, map_location="cpu", weights_only=True)
+                if isinstance(raw_sd, dict):
+                    inner = raw_sd.get("generator", raw_sd.get("state_dict", raw_sd))
+                    if isinstance(inner, dict) and "dict.weight" in inner:
+                        num_units = int(inner["dict.weight"].shape[0])
+            except Exception:
+                pass
+            raw_vocoder = CodeHiFiGANGenerator(num_units=num_units)
+            vocoder = load_model_checkpoint(vocoder_weights_path, raw_vocoder, dev, strict=True)
 
         return cls(model=model, quantizer=quantizer, vocoder=vocoder, device=dev)
 
@@ -325,12 +413,22 @@ def run_synthesizer_cli():
         type=str,
         choices=["units", "features", "end-to-end"],
         default="units",
-        help="Synthesis mode: 'units' (from discrete tokens), 'features' (from continuous 768d), 'end-to-end' (NAM -> speech).",
+        help=(
+            "Synthesis mode: 'units' (from discrete tokens), "
+            "'features' (from continuous 768d), 'end-to-end' (NAM -> speech)."
+        ),
     )
     parser.add_argument("--input-file", type=str, required=True, help="Path to input .npy or .txt file")
     parser.add_argument("--output-wav", type=str, default="output/synthesis.wav", help="Destination path for 16kHz WAV file")
     parser.add_argument("--vocoder-checkpoint", type=str, default=None, help="Path to Unit HiFi-GAN vocoder weights (*.pt)")
-    parser.add_argument("--kmeans-checkpoint", type=str, default=None, help="Path to K-Means model (*.bin or *.joblib)")
+    parser.add_argument(
+        "--kmeans-checkpoint",
+        "--kmeans-model",
+        dest="kmeans_checkpoint",
+        type=str,
+        default=None,
+        help="Path to K-Means model (*.bin or *.joblib)",
+    )
     parser.add_argument("--model-checkpoint", type=str, default=None, help="Path to translation model weights (*.pth)")
     parser.add_argument("--device", type=str, default=None, help="Execution device: cpu or cuda")
     args = parser.parse_args()

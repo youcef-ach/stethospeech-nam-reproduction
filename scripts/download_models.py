@@ -15,8 +15,14 @@ import urllib.request
 FILES = {
     "mhubert_base.pt": "https://dl.fbaipublicfiles.com/hubert/mhubert_base_vp_en_es_fr_it3.pt",
     "mhubert_km1000.bin": "https://dl.fbaipublicfiles.com/hubert/mhubert_base_vp_en_es_fr_it3_L11_km1000.bin",
-    "matched_vocoder.pt": "https://dl.fbaipublicfiles.com/fairseq/speech_to_speech/vocoder/code_hifigan/mhubert_vp_en_es_fr_it3_400k_layer11_km1000_lj/g_00500000",
-    "matched_config.json": "https://dl.fbaipublicfiles.com/fairseq/speech_to_speech/vocoder/code_hifigan/mhubert_vp_en_es_fr_it3_400k_layer11_km1000_lj/config.json",
+    "matched_vocoder.pt": (
+        "https://dl.fbaipublicfiles.com/fairseq/speech_to_speech/vocoder/code_hifigan/"
+        "mhubert_vp_en_es_fr_it3_400k_layer11_km1000_lj/g_00500000"
+    ),
+    "matched_config.json": (
+        "https://dl.fbaipublicfiles.com/fairseq/speech_to_speech/vocoder/code_hifigan/"
+        "mhubert_vp_en_es_fr_it3_400k_layer11_km1000_lj/config.json"
+    ),
 }
 
 

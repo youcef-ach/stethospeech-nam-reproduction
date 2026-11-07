@@ -65,4 +65,3 @@ def test_kmeans_unit_quantizer_fit_predict():
 
     assert units.shape == (25,), f"Expected shape (25,), got {units.shape}"
     assert np.all(units >= 0) and np.all(units < 10), "Unit IDs must be within [0, 9]"
-

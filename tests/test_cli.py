@@ -19,6 +19,7 @@ from stethospeech.training.early_stopping import EarlyStopping
 from stethospeech.training.trainer import ModelTrainer
 from stethospeech.models.transformer_baseline import TransformerSeq2Seq
 from stethospeech.models.vocoder import CodeHiFiGANGenerator
+from stethospeech.features.quantization import KMeansUnitQuantizer
 from stethospeech.data.dataset import collate_stethospeech_batch
 from stethospeech.inference.synthesizer import (
     load_model_checkpoint,
@@ -343,13 +344,13 @@ def test_harden_checkpoint_loading():
     with pytest.raises(FileNotFoundError):
         load_model_checkpoint("non_existent_weights.pth", model, device)
 
-    # 2. Corrupted file raises ValueError
     with tempfile.TemporaryDirectory() as temp_dir:
+        # 2. Corrupted file raises ValueError
         corrupted_path = os.path.join(temp_dir, "corrupted.pth")
         with open(corrupted_path, "wb") as f:
             f.write(b"NOT_A_VALID_PYTORCH_OR_PICKLE_FILE_RAW_GARBAGE")
 
-        with pytest.raises(ValueError, match="Corrupted or unreadable"):
+        with pytest.raises(ValueError, match="Failed to load checkpoint|Corrupted or unreadable"):
             load_model_checkpoint(corrupted_path, model, device)
 
         # 3. Empty file raises ValueError
@@ -363,9 +364,198 @@ def test_harden_checkpoint_loading():
         incompatible_path = os.path.join(temp_dir, "incompatible.pth")
         vocoder = CodeHiFiGANGenerator()
         torch.save({"state_dict": vocoder.state_dict()}, incompatible_path)
-
-        with pytest.raises(KeyError, match="Checkpoint keys do not match"):
+        with pytest.raises(KeyError, match="missing"):
             load_model_checkpoint(incompatible_path, model, device)
+
+        # 5. Partially populated checkpoint (missing keys) raises KeyError
+        full_state = model.state_dict()
+        subset_keys = list(full_state.keys())[:len(full_state) // 2]
+        partial_state = {k: full_state[k] for k in subset_keys}
+        partial_path = os.path.join(temp_dir, "partial.pth")
+        torch.save({"state_dict": partial_state}, partial_path)
+        with pytest.raises(KeyError, match="missing"):
+            load_model_checkpoint(partial_path, model, device)
+
+        # 6. Checkpoint with unexpected keys raises KeyError
+        unexpected_state = dict(full_state)
+        unexpected_state["bogus_layer.param"] = torch.randn(10)
+        unexpected_path = os.path.join(temp_dir, "unexpected.pth")
+        torch.save({"state_dict": unexpected_state}, unexpected_path)
+        with pytest.raises(KeyError, match="unexpected"):
+            load_model_checkpoint(unexpected_path, model, device)
+
+        # 7. Checkpoint with incompatible tensor shapes raises ValueError
+        mismatched_state = dict(full_state)
+        for k in mismatched_state:
+            if mismatched_state[k].dim() >= 2:
+                mismatched_state[k] = torch.randn(7, 7)
+                break
+        mismatch_path = os.path.join(temp_dir, "mismatch.pth")
+        torch.save({"state_dict": mismatched_state}, mismatch_path)
+        with pytest.raises(ValueError, match="Incompatible tensor shapes"):
+            load_model_checkpoint(mismatch_path, model, device)
+
+        # 8. Vocoder partial weights rejected with KeyError
+        v_full = vocoder.state_dict()
+        v_partial = {k: v_full[k] for k in list(v_full.keys())[:-2]}  # drop 2 keys
+        v_partial_path = os.path.join(temp_dir, "vocoder_partial.pt")
+        torch.save({"generator": v_partial}, v_partial_path)
+        with pytest.raises(KeyError, match="missing"):
+            load_model_checkpoint(v_partial_path, vocoder, device, strict=True)
+
+
+def test_e2e_cli_checkpoint_evaluation():
+    """End-to-end CLI integration test: evaluate a saved checkpoint with --eval-only."""
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    script_path = os.path.join(repo_root, "scripts", "train.py")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.path.join(repo_root, "src")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        nam_dir = os.path.join(temp_dir, "nam")
+        spk_dir = os.path.join(temp_dir, "spk")
+        out_dir = os.path.join(temp_dir, "run_eval")
+        os.makedirs(nam_dir)
+        os.makedirs(spk_dir)
+
+        for i in range(8):
+            fid = f"eval_{i:02d}"
+            np.save(os.path.join(nam_dir, f"{fid}.npy"), np.random.randn(20, 768).astype(np.float32))
+            np.save(os.path.join(spk_dir, f"{fid}.npy"), np.random.randn(20, 768).astype(np.float32))
+
+        cfg_dict = {
+            "experiment_name": "eval_smoke_test",
+            "model": {
+                "architecture": "transformer_baseline",
+                "input_dim": 768,
+                "hidden_dim": 64,
+                "output_dim": 768,
+                "num_layers": 1,
+                "nheads": 2,
+                "dim_ff": 128,
+                "dropout": 0.0,
+            },
+            "training": {
+                "seed": 42,
+                "epochs": 1,
+                "batch_size": 2,
+                "learning_rate": 0.001,
+                "weight_decay": 0.0,
+                "clip_grad_norm": 1.0,
+                "lr_patience": 2,
+                "lr_factor": 0.5,
+                "early_stop_patience": 5,
+                "early_stop_delta": 0.001,
+                "device": "cpu",
+            },
+            "data": {
+                "nam_dir": nam_dir,
+                "speech_dir": spk_dir,
+                "output_dir": out_dir,
+                "train_split": 0.50,
+                "val_split": 0.25,
+                "test_split": 0.25,
+                "num_workers": 0,
+            },
+        }
+
+        cfg_path = os.path.join(temp_dir, "eval_config.yaml")
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            yaml.dump(cfg_dict, f)
+
+        # 1. Train 1 epoch to save checkpoint
+        cmd_train = [sys.executable, script_path, "--config", cfg_path, "--device", "cpu", "--epochs", "1"]
+        res_train = subprocess.run(cmd_train, capture_output=True, text=True, cwd=repo_root, env=env)
+        assert res_train.returncode == 0
+
+        ckpt_path = os.path.join(out_dir, "best_model.pth")
+        assert os.path.exists(ckpt_path)
+
+        # 2. Run evaluation CLI with --eval-only
+        cmd_eval = [
+            sys.executable, script_path, "--config", cfg_path,
+            "--checkpoint", ckpt_path, "--eval-only", "--device", "cpu",
+        ]
+        res_eval = subprocess.run(cmd_eval, capture_output=True, text=True, cwd=repo_root, env=env)
+        assert res_eval.returncode == 0, f"Eval CLI failed:\n{res_eval.stderr}\n{res_eval.stdout}"
+        assert "Evaluated Loss" in res_eval.stdout
+
+
+def test_e2e_cli_synthesis_features():
+    """End-to-end CLI integration test: synthesize audio from continuous features via K-Means and vocoder."""
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    script_path = os.path.join(repo_root, "scripts", "synthesize.py")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.path.join(repo_root, "src")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # 1. Train and save a small K-Means model (5 clusters)
+        quantizer = KMeansUnitQuantizer(num_clusters=5, random_state=42)
+        dummy_feats = np.random.randn(50, 768).astype(np.float32)
+        quantizer.fit(dummy_feats)
+        km_path = os.path.join(temp_dir, "kmeans.bin")
+        quantizer.save(km_path)
+
+        # 2. Save synthetic vocoder weights (using CodeHiFiGANGenerator with num_units=5 to match K-Means)
+        vocoder = CodeHiFiGANGenerator(num_units=5)
+        vocoder_ckpt = os.path.join(temp_dir, "vocoder_weights.pt")
+        torch.save({"generator": vocoder.state_dict()}, vocoder_ckpt)
+
+        # 3. Save synthetic continuous speech features (20 frames)
+        features = np.random.randn(20, 768).astype(np.float32)
+        feat_path = os.path.join(temp_dir, "feats.npy")
+        np.save(feat_path, features)
+
+        out_wav = os.path.join(temp_dir, "output_feat.wav")
+
+        # 4. Run CLI in features mode testing --kmeans-checkpoint
+        cmd = [
+            sys.executable,
+            script_path,
+            "--mode", "features",
+            "--input-file", feat_path,
+            "--output-wav", out_wav,
+            "--kmeans-checkpoint", km_path,
+            "--vocoder-checkpoint", vocoder_ckpt,
+            "--device", "cpu",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root, env=env)
+        assert result.returncode == 0, f"Feature synthesis CLI failed:\n{result.stderr}\n{result.stdout}"
+        assert os.path.exists(out_wav)
+
+        data, sr = sf.read(out_wav)
+        assert sr == 16000
+        # 20 frames * 320 = 6400 samples
+        assert len(data) == 6400
+
+
+def test_convert_checkpoint_utility():
+    """Verify scripts/convert_checkpoint.py sanitizes legacy checkpoints to weights_only=True format."""
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    script_path = os.path.join(repo_root, "scripts", "convert_checkpoint.py")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.path.join(repo_root, "src")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        input_path = os.path.join(temp_dir, "legacy.pth")
+        output_path = os.path.join(temp_dir, "converted.pth")
+
+        # Create simulated checkpoint containing tensor parameters
+        dummy_state = {
+            "weight": torch.randn(10, 10),
+            "bias": torch.randn(10),
+        }
+        torch.save({"state_dict": dummy_state}, input_path)
+
+        cmd = [sys.executable, script_path, "--input", input_path, "--output", output_path]
+        res = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root, env=env)
+        assert res.returncode == 0
+        assert os.path.exists(output_path)
+
+        # Verify it can be loaded with weights_only=True
+        loaded = torch.load(output_path, map_location="cpu", weights_only=True)
+        assert "state_dict" in loaded
+        assert "weight" in loaded["state_dict"]
 
 
 def test_synthesizer_helpers():

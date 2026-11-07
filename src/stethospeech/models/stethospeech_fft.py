@@ -249,4 +249,3 @@ class StethoSpeechWithCTC(StethoSpeechModel):
 
         out_features = self.out_proj(x)
         return out_features, ctc_logits
-

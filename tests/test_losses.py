@@ -78,4 +78,3 @@ def test_auxiliary_ctc_loss():
 
     loss.backward()
     assert logits.grad is not None
-

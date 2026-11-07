@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "Reproduction and engineering study of Non-Audible Murmur (NAM) to audible speech translation using self-supervised speech representations"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Research Use / Attribution Required" }
+license = { text = "Academic Review & Reproducibility Assessment (All Rights Reserved)" }
 authors = [
     { name = "Achouri Youcef Islem", email = "yi.achouri@esi-sba.dz" }
 ]
@@ -49,6 +49,7 @@ dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "flake8>=6.0.0",
+    "ruff>=0.1.0",
     "black>=23.0.0",
     "isort>=5.12.0",
 ]

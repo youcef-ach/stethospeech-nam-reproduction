@@ -100,7 +100,7 @@ stethospeech/
 │       ├── training/             # Loss functions, trainer, and early stopping
 │       ├── inference/            # End-to-end synthesizer pipeline
 │       └── utils/                # Configuration loader, logging, and seed management
-├── tests/                        # 37 automated CPU tests (parameter counts, math, splits, CLI e2e, hardening)
+├── tests/                        # 40 automated CPU tests (parameter counts, math, splits, CLI e2e, hardening)
 ├── pyproject.toml                # Build system and dependency specifications
 └── README.md
 ```
@@ -172,7 +172,7 @@ python scripts/train.py --config configs/experimental_fft.yaml --device cuda
 ### 8.2 Checkpoint Evaluation
 Evaluate a trained checkpoint on the held-out test split:
 ```bash
-python scripts/train.py --config configs/baseline_transformer.yaml --checkpoint checkpoints/best_model.pth --eval-only
+python scripts/train.py --config configs/baseline_transformer.yaml --checkpoint experiments/baseline/best_model.pth --eval-only
 ```
 
 ### 8.3 Speech Synthesis & Neural Vocoding
@@ -194,12 +194,19 @@ python scripts/synthesize.py \
     --mode features \
     --input-file data/features/speech_feat.npy \
     --output-wav output/sample_from_features.wav \
-    --kmeans-model checkpoints/kmeans/mhubert_base_vp_en_es_fr_it_de_layer11_clusters_1000.bin \
+    --kmeans-checkpoint checkpoints/kmeans/mhubert_base_vp_en_es_fr_it_de_layer11_clusters_1000.bin \
     --vocoder-checkpoint checkpoints/vocoder/g_00500000 \
     --device cpu
 ```
 
-*Checkpoint Safeguard:* All CLI entry points strictly validate checkpoint files. If a checkpoint is missing, corrupted, or incompatible with the target architecture, execution halts immediately with a clear error. The CLI refuses to generate synthetic audio from uninitialized random weights.
+*Checkpoint Safeguard:* All CLI entry points strictly validate checkpoint files using `weights_only=True` by default. If a checkpoint is missing, corrupted, partially populated, or incompatible with the target architecture, execution halts immediately with a descriptive error. The CLI refuses to generate synthetic audio from uninitialized random weights.
+
+### 8.4 Trusted Offline Checkpoint Conversion
+For legacy checkpoints containing pickled Python objects that fail secure `weights_only=True` loading, convert them offline using the dedicated trusted conversion utility:
+```bash
+python scripts/convert_checkpoint.py --input legacy_model.pth --output secure_model.pth
+```
+This utility loads the trusted file in an isolated offline session and re-saves pure parameter tensors that load safely with `weights_only=True`.
 
 ---
 
